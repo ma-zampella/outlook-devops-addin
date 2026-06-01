@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+    <title>Email to DevOps</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            padding: 16px;
+            background: #fafafa;
+            font-size: 14px;
+        }
+        h2 { margin-bottom: 16px; color: #0078d4; font-size: 18px; }
+        .field { margin-bottom: 14px; }
+        label { display: block; font-weight: 600; margin-bottom: 4px; color: #333; }
+        input, select, textarea {
+            width: 100%;
+            padding: 8px 10px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            font-size: 13px;
+        }
+        textarea { resize: vertical; min-height: 80px; }
+        input:focus, select:focus, textarea:focus {
+            outline: none;
+            border-color: #0078d4;
+            box-shadow: 0 0 0 1px #0078d4;
+        }
+        .btn {
+            width: 100%;
+            padding: 10px;
+            background: #0078d4;
+            color: #fff;
+            border: none;
+            border-radius: 4px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            margin-top: 8px;
+        }
+        .btn:hover { background: #106ebe; }
+        .btn:disabled { background: #ccc; cursor: not-allowed; }
+        .status {
+            margin-top: 12px;
+            padding: 10px;
+            border-radius: 4px;
+            display: none;
+            font-size: 13px;
+        }
+        .status.success { display: block; background: #dff6dd; color: #107c10; }
+        .status.error { display: block; background: #fde7e9; color: #a80000; }
+        .setup-link {
+            display: block;
+            text-align: right;
+            font-size: 11px;
+            color: #666;
+            margin-bottom: 12px;
+            cursor: pointer;
+            text-decoration: underline;
+        }
+        .setup-panel {
+            display: none;
+            background: #fff;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            padding: 12px;
+            margin-bottom: 14px;
+        }
+        .setup-panel.visible { display: block; }
+        .btn-sm {
+            padding: 6px 12px;
+            font-size: 12px;
+            margin-top: 8px;
+        }
+    </style>
+</head>
+<body>
+    <h2>📋 Crea Work Item</h2>
+
+    <span class="setup-link" id="toggleSetup">⚙️ Impostazioni</span>
+    <div class="setup-panel" id="setupPanel">
+        <div class="field">
+            <label for="patInput">Personal Access Token (DevOps)</label>
+            <input type="password" id="patInput" placeholder="Inserisci il tuo PAT"/>
+        </div>
+        <button class="btn btn-sm" id="savePat">Salva PAT</button>
+        <div class="field" style="margin-top: 12px;">
+            <label for="ghTokenInput">Token GitHub (per AI)</label>
+            <input type="password" id="ghTokenInput" placeholder="ghp_..."/>
+        </div>
+        <button class="btn btn-sm" id="saveGhToken">Salva Token GitHub</button>
+    </div>
+
+    <div class="field">
+        <label for="titleInput">Titolo</label>
+        <input type="text" id="titleInput" placeholder="Caricamento..."/>
+    </div>
+
+    <div class="field">
+        <label for="descInput">Descrizione</label>
+        <textarea id="descInput" placeholder="Caricamento..."></textarea>
+        <button class="btn btn-sm" id="synthesizeBtn" style="background: #5c2d91; margin-top: 6px;">✨ Sintetizza con AI</button>
+    </div>
+
+    <div class="field">
+        <label for="boardSelect">Board</label>
+        <select id="boardSelect">
+            <option value="dev">Reply Development Activities (PBI)</option>
+            <option value="ops">Reply Operation (Task)</option>
+            <option value="both">Entrambe</option>
+        </select>
+    </div>
+
+    <div class="field">
+        <label for="assignSelect">Assegna a</label>
+        <select id="assignSelect">
+            <option value="ta.singh@reply.it">Tarandeep Singh</option>
+            <option value="c.muntianu@reply.it">Cristian Muntianu</option>
+            <option value="ma.zampella@reply.it">Marcello Zampella</option>
+        </select>
+    </div>
+
+    <button class="btn" id="createBtn">Crea Work Item</button>
+
+    <div class="status" id="statusMsg"></div>
+
+    <script src="https://appsforoffice.microsoft.com/lib/1.1/hosted/office.js"></script>
+    <script src="taskpane.js"></script>
+</body>
+</html>
