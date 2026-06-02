@@ -366,15 +366,7 @@ function setDraftReply(bodyText) {
     var item = Office.context.mailbox.item;
     var htmlBody = bodyText.replace(/\n/g, "<br/>");
     try {
-        item.displayReplyForm({
-            htmlBody: htmlBody,
-            callback: function (result) {
-                if (result.status === Office.AsyncResultStatus.Failed) {
-                    showStatusHtml(document.getElementById("statusMsg").innerHTML +
-                        "<br/><br/><b>Draft (copia manualmente):</b><br/>" + htmlBody, "success");
-                }
-            }
-        });
+        item.displayReplyForm(htmlBody);
     } catch (e) {
         // Fallback: show draft text in the status area
         showStatusHtml(document.getElementById("statusMsg").innerHTML +
