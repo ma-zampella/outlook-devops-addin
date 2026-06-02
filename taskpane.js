@@ -82,15 +82,24 @@ function synthesizeDescription() {
     btn.disabled = true;
     btn.textContent = "Sintesi in corso...";
 
-    var prompt = "Sei un assistente che crea descrizioni sintetiche per task di lavoro. " +
-        "Data la seguente email, scrivi una descrizione concisa (max 3-4 frasi) per un work item " +
-        "che catturi l'azione richiesta, il contesto e le eventuali scadenze. " +
-        "Rispondi SOLO con la descrizione, senza prefissi.\n\nEmail:\n" + text.substring(0, 3000);
+    var subject = document.getElementById("titleInput").value;
+
+    var prompt = "You are an assistant that analyzes emails and produces two outputs.\n" +
+        "OUTPUT 1 - TITLE: Determine if the email is related to one of these brands: Iveco, IVG, FPT. " +
+        "If you can identify the brand, output: MAIL / BRAND / original_subject. " +
+        "If you cannot identify the brand, output: MAIL / original_subject. " +
+        "Example: MAIL / FPT / Issue on Sitecore\n" +
+        "OUTPUT 2 - DESCRIPTION: Write a concise summary (3-4 sentences max) in ENGLISH of the email content, " +
+        "capturing the action requested, context and any deadlines.\n\n" +
+        "Reply ONLY in this exact JSON format (no markdown, no code blocks):\n" +
+        '{"title": "MAIL / ... / ...", "description": "..."}\n\n' +
+        "Email subject: " + subject + "\n" +
+        "Email body:\n" + text.substring(0, 3000);
 
     var payload = JSON.stringify({
         model: "gpt-4o-mini",
         messages: [{ role: "user", content: prompt }],
-        max_tokens: 300
+        max_tokens: 400
     });
 
     fetch("https://models.inference.ai.azure.com/chat/completions", {
@@ -108,9 +117,18 @@ function synthesizeDescription() {
         return response.json();
     })
     .then(function (data) {
-        var content = data.choices[0].message.content;
-        document.getElementById("descInput").value = content;
-        showStatus("Descrizione sintetizzata con AI", "success");
+        var content = data.choices[0].message.content.trim();
+        try {
+            // Remove markdown code block if present
+            content = content.replace(/^```json\s*/, "").replace(/```\s*$/, "").trim();
+            var parsed = JSON.parse(content);
+            document.getElementById("titleInput").value = parsed.title;
+            document.getElementById("descInput").value = "PLEASE CHECK MAIL ATTACHED\n\n" + parsed.description;
+        } catch (e) {
+            // Fallback: use raw content as description
+            document.getElementById("descInput").value = "PLEASE CHECK MAIL ATTACHED\n\n" + content;
+        }
+        showStatus("Titolo e descrizione generati con AI", "success");
     })
     .catch(function (err) {
         showStatus("Errore sintesi: " + err.message, "error");
@@ -206,19 +224,38 @@ function createWorkItem() {
             if (board === "dev" || board === "both") {
                 promises.push(
                     callDevOpsApi(pat, "Reply%20Development%20Activities", "Product%20Backlog%20Item", title, description, assignTo, attachmentUrl)
+                        .then(function (r) { r._project = "Reply%20Development%20Activities"; return r; })
                 );
             }
             if (board === "ops" || board === "both") {
                 promises.push(
                     callDevOpsApi(pat, "Reply%20Operation", "Task", title, description, assignTo, attachmentUrl)
+                        .then(function (r) { r._project = "Reply%20Operation"; return r; })
                 );
             }
 
             return Promise.all(promises);
         })
         .then(function (results) {
-            var ids = results.map(function (r) { return "#" + r.id; }).join(", ");
-            showStatus("Work item creato: " + ids, "success");
+            var links = results.map(function (r) {
+                var url = "https://dev.azure.com/Ivecogrp/" + r._project + "/_workitems/edit/" + r.id;
+                return '<a href="' + url + '" target="_blank">#' + r.id + ' (' + r._project.replace(/%20/g, ' ') + ')</a>';
+            }).join("<br/>");
+            showStatusHtml("Work item creato:<br/>" + links, "success");
+
+            // Find Reply Operation task link for the draft
+            var opsResult = null;
+            for (var i = 0; i < results.length; i++) {
+                if (results[i]._project === "Reply%20Operation") {
+                    opsResult = results[i];
+                    break;
+                }
+            }
+            var useResult = opsResult || results[0];
+            var taskLink = "https://dev.azure.com/Ivecogrp/" + useResult._project + "/_workitems/edit/" + useResult.id;
+
+            // Generate draft reply
+            generateDraftReply(taskLink, useResult.id);
         })
         .catch(function (err) {
             showStatus("Errore: " + err.message, "error");
@@ -272,4 +309,76 @@ function showStatus(message, type) {
     var el = document.getElementById("statusMsg");
     el.textContent = message;
     el.className = "status " + type;
+}
+
+function showStatusHtml(html, type) {
+    var el = document.getElementById("statusMsg");
+    el.innerHTML = html;
+    el.className = "status " + type;
+}
+
+// --- Draft Reply ---
+
+function generateDraftReply(taskLink, taskId) {
+    var ghToken = getGhToken();
+    if (!ghToken) return;
+
+    var emailText = emailBodyFull.substring(0, 1500);
+    var subject = document.getElementById("titleInput").value;
+
+    var prompt = "You must detect the language of the following email (Italian or English) and reply in the SAME language.\n" +
+        "Write a brief, professional reply email saying:\n" +
+        "- We have received their message and are looking into the issue\n" +
+        "- We will keep them updated on the progress\n" +
+        "- Reference the internal tracking task: " + taskLink + "\n\n" +
+        "Keep it short (3-5 sentences). Do NOT include subject line. Output ONLY the email body text.\n\n" +
+        "Original email subject: " + subject + "\n" +
+        "Original email body:\n" + emailText;
+
+    var payload = JSON.stringify({
+        model: "gpt-4o-mini",
+        messages: [{ role: "user", content: prompt }],
+        max_tokens: 300
+    });
+
+    fetch("https://models.inference.ai.azure.com/chat/completions", {
+        method: "POST",
+        headers: {
+            "Authorization": "Bearer " + ghToken,
+            "Content-Type": "application/json"
+        },
+        body: payload
+    })
+    .then(function (response) {
+        if (!response.ok) throw new Error("LLM error");
+        return response.json();
+    })
+    .then(function (data) {
+        var draftBody = data.choices[0].message.content.trim();
+        setDraftReply(draftBody);
+    })
+    .catch(function (err) {
+        showStatus("Draft non generato: " + err.message, "error");
+    });
+}
+
+function setDraftReply(bodyText) {
+    var item = Office.context.mailbox.item;
+    var htmlBody = bodyText.replace(/\n/g, "<br/>");
+    try {
+        item.displayReplyForm({
+            htmlBody: htmlBody,
+            callback: function (result) {
+                if (result.status === Office.AsyncResultStatus.Failed) {
+                    showStatusHtml(document.getElementById("statusMsg").innerHTML +
+                        "<br/><br/><b>Draft (copia manualmente):</b><br/>" + htmlBody, "success");
+                }
+            }
+        });
+    } catch (e) {
+        // Fallback: show draft text in the status area
+        showStatusHtml(document.getElementById("statusMsg").innerHTML +
+            "<br/><br/><b>Draft risposta:</b><br/><div style='background:#fff;padding:8px;border:1px solid #ccc;margin-top:4px;'>" +
+            htmlBody + "</div>", "success");
+    }
 }
