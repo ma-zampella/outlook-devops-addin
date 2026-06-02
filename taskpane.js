@@ -4,7 +4,6 @@ Office.onReady(function (info) {
     if (info.host === Office.HostType.Outlook) {
         loadEmailData();
         document.getElementById("createBtn").addEventListener("click", createWorkItem);
-        document.getElementById("synthesizeBtn").addEventListener("click", synthesizeDescription);
         document.getElementById("toggleSetup").addEventListener("click", toggleSetup);
         document.getElementById("savePat").addEventListener("click", savePat);
         document.getElementById("saveGhToken").addEventListener("click", saveGhToken);
@@ -14,15 +13,18 @@ Office.onReady(function (info) {
 // --- Email loading ---
 
 var emailBodyFull = "";
+var emailSubject = "";
 
 function loadEmailData() {
     var item = Office.context.mailbox.item;
-    document.getElementById("titleInput").value = item.subject || "";
+    emailSubject = item.subject || "";
+    document.getElementById("titleInput").value = emailSubject;
 
+    // Get full conversation body (includes entire thread)
     item.body.getAsync(Office.CoercionType.Text, function (result) {
         if (result.status === Office.AsyncResultStatus.Succeeded) {
             emailBodyFull = result.value;
-            document.getElementById("descInput").value = emailBodyFull.substring(0, 500);
+            document.getElementById("descInput").value = "L'AI genererà titolo e descrizione al momento della creazione...";
         } else {
             document.getElementById("descInput").value = "(impossibile leggere il body)";
         }
@@ -62,39 +64,26 @@ function getGhToken() {
     return localStorage.getItem("github_token");
 }
 
-// --- LLM Synthesis ---
+// --- LLM Synthesis (integrated into creation flow) ---
 
-function synthesizeDescription() {
+function synthesizeWithAI(subject, bodyText) {
     var ghToken = getGhToken();
     if (!ghToken) {
-        showStatus("Configura il token GitHub nelle impostazioni!", "error");
-        toggleSetup();
-        return;
+        return Promise.reject(new Error("Token GitHub non configurato"));
     }
 
-    var text = emailBodyFull || document.getElementById("descInput").value;
-    if (!text.trim()) {
-        showStatus("Nessun testo da sintetizzare", "error");
-        return;
-    }
-
-    var btn = document.getElementById("synthesizeBtn");
-    btn.disabled = true;
-    btn.textContent = "Sintesi in corso...";
-
-    var subject = document.getElementById("titleInput").value;
-
-    var prompt = "You are an assistant that analyzes emails and produces two outputs.\n" +
+    var prompt = "You are an assistant that analyzes email threads and produces two outputs.\n" +
+        "You will receive the FULL email thread (including previous replies). Use the entire context to understand the issue.\n\n" +
         "OUTPUT 1 - TITLE: Determine if the email is related to one of these brands: Iveco, IVG, FPT. " +
         "If you can identify the brand, output: MAIL / BRAND / original_subject. " +
         "If you cannot identify the brand, output: MAIL / original_subject. " +
         "Example: MAIL / FPT / Issue on Sitecore\n" +
-        "OUTPUT 2 - DESCRIPTION: Write a concise summary (3-4 sentences max) in ENGLISH of the email content, " +
-        "capturing the action requested, context and any deadlines.\n\n" +
+        "OUTPUT 2 - DESCRIPTION: Write a concise summary (3-4 sentences max) in ENGLISH of the email thread, " +
+        "capturing the action requested, context and any deadlines. Consider the full conversation history.\n\n" +
         "Reply ONLY in this exact JSON format (no markdown, no code blocks):\n" +
         '{"title": "MAIL / ... / ...", "description": "..."}\n\n' +
         "Email subject: " + subject + "\n" +
-        "Email body:\n" + text.substring(0, 3000);
+        "Full email thread:\n" + bodyText.substring(0, 4000);
 
     var payload = JSON.stringify({
         model: "gpt-4o-mini",
@@ -102,7 +91,7 @@ function synthesizeDescription() {
         max_tokens: 400
     });
 
-    fetch("https://models.inference.ai.azure.com/chat/completions", {
+    return fetch("https://models.inference.ai.azure.com/chat/completions", {
         method: "POST",
         headers: {
             "Authorization": "Bearer " + ghToken,
@@ -118,24 +107,19 @@ function synthesizeDescription() {
     })
     .then(function (data) {
         var content = data.choices[0].message.content.trim();
+        content = content.replace(/^```json\s*/, "").replace(/```\s*$/, "").trim();
         try {
-            // Remove markdown code block if present
-            content = content.replace(/^```json\s*/, "").replace(/```\s*$/, "").trim();
             var parsed = JSON.parse(content);
-            document.getElementById("titleInput").value = parsed.title;
-            document.getElementById("descInput").value = "PLEASE CHECK MAIL ATTACHED\n\n" + parsed.description;
+            return {
+                title: parsed.title,
+                description: "PLEASE CHECK MAIL ATTACHED\n\n" + parsed.description
+            };
         } catch (e) {
-            // Fallback: use raw content as description
-            document.getElementById("descInput").value = "PLEASE CHECK MAIL ATTACHED\n\n" + content;
+            return {
+                title: "MAIL / " + subject,
+                description: "PLEASE CHECK MAIL ATTACHED\n\n" + content
+            };
         }
-        showStatus("Titolo e descrizione generati con AI", "success");
-    })
-    .catch(function (err) {
-        showStatus("Errore sintesi: " + err.message, "error");
-    })
-    .finally(function () {
-        btn.disabled = false;
-        btn.textContent = "✨ Sintetizza con AI";
     });
 }
 
@@ -190,51 +174,62 @@ function createWorkItem() {
         return;
     }
 
-    var title = document.getElementById("titleInput").value.trim();
-    var description = document.getElementById("descInput").value.trim();
-    var board = document.getElementById("boardSelect").value;
-    var assignTo = document.getElementById("assignSelect").value;
-
-    if (!title) {
-        showStatus("Il titolo è obbligatorio", "error");
+    var ghToken = getGhToken();
+    if (!ghToken) {
+        showStatus("Configura il token GitHub nelle impostazioni!", "error");
+        toggleSetup();
         return;
     }
 
+    var board = document.getElementById("boardSelect").value;
+    var assignTo = document.getElementById("assignSelect").value;
+
     var btn = document.getElementById("createBtn");
     btn.disabled = true;
-    btn.textContent = "Creazione in corso...";
+    btn.textContent = "Sintesi AI in corso...";
 
-    // Step 1: Get email as .eml
-    getEmailAsEml()
-        .then(function (base64Eml) {
-            // Step 2: Upload to first project (attachment is shared in org)
-            var firstProject = (board === "ops") ? "Reply%20Operation" : "Reply%20Development%20Activities";
-            return uploadAttachment(pat, firstProject, base64Eml, title.substring(0, 50) + ".eml")
-                .then(function (attachResult) {
-                    return attachResult.url;
+    // Step 1: AI synthesis
+    synthesizeWithAI(emailSubject, emailBodyFull)
+        .then(function (synthesized) {
+            var title = synthesized.title;
+            var description = synthesized.description;
+
+            // Update UI with AI results
+            document.getElementById("titleInput").value = title;
+            document.getElementById("descInput").value = description;
+
+            btn.textContent = "Creazione work item...";
+
+            // Step 2: Get email as .eml
+            return getEmailAsEml()
+                .then(function (base64Eml) {
+                    var firstProject = (board === "ops") ? "Reply%20Operation" : "Reply%20Development%20Activities";
+                    return uploadAttachment(pat, firstProject, base64Eml, title.substring(0, 50) + ".eml")
+                        .then(function (attachResult) {
+                            return attachResult.url;
+                        });
+                })
+                .catch(function () {
+                    return null;
+                })
+                .then(function (attachmentUrl) {
+                    var promises = [];
+
+                    if (board === "dev" || board === "both") {
+                        promises.push(
+                            callDevOpsApi(pat, "Reply%20Development%20Activities", "Product%20Backlog%20Item", title, description, assignTo, attachmentUrl)
+                                .then(function (r) { r._project = "Reply%20Development%20Activities"; return r; })
+                        );
+                    }
+                    if (board === "ops" || board === "both") {
+                        promises.push(
+                            callDevOpsApi(pat, "Reply%20Operation", "Task", title, description, assignTo, attachmentUrl)
+                                .then(function (r) { r._project = "Reply%20Operation"; return r; })
+                        );
+                    }
+
+                    return Promise.all(promises);
                 });
-        })
-        .catch(function () {
-            // Se getAsFileAsync non è supportato (Mailbox < 1.14), procedi senza allegato
-            return null;
-        })
-        .then(function (attachmentUrl) {
-            var promises = [];
-
-            if (board === "dev" || board === "both") {
-                promises.push(
-                    callDevOpsApi(pat, "Reply%20Development%20Activities", "Product%20Backlog%20Item", title, description, assignTo, attachmentUrl)
-                        .then(function (r) { r._project = "Reply%20Development%20Activities"; return r; })
-                );
-            }
-            if (board === "ops" || board === "both") {
-                promises.push(
-                    callDevOpsApi(pat, "Reply%20Operation", "Task", title, description, assignTo, attachmentUrl)
-                        .then(function (r) { r._project = "Reply%20Operation"; return r; })
-                );
-            }
-
-            return Promise.all(promises);
         })
         .then(function (results) {
             var links = results.map(function (r) {
@@ -254,7 +249,8 @@ function createWorkItem() {
             var useResult = opsResult || results[0];
             var taskLink = "https://dev.azure.com/Ivecogrp/" + useResult._project + "/_workitems/edit/" + useResult.id;
 
-            // Generate draft reply
+            // Generate draft reply all
+            btn.textContent = "Generazione bozza...";
             generateDraftReply(taskLink, useResult.id);
         })
         .catch(function (err) {
@@ -323,17 +319,18 @@ function generateDraftReply(taskLink, taskId) {
     var ghToken = getGhToken();
     if (!ghToken) return;
 
-    var emailText = emailBodyFull.substring(0, 1500);
+    var emailText = emailBodyFull.substring(0, 2000);
     var subject = document.getElementById("titleInput").value;
 
-    var prompt = "You must detect the language of the following email (Italian or English) and reply in the SAME language.\n" +
-        "Write a brief, professional reply email saying:\n" +
+    var prompt = "Analyze the following email thread. Identify the language of the LAST message from the customer/external sender (not internal replies). " +
+        "Reply in THAT language (English or Italian).\n\n" +
+        "Write a brief, professional reply saying:\n" +
         "- We have received their message and are looking into the issue\n" +
         "- We will keep them updated on the progress\n" +
-        "- Reference the internal tracking task: " + taskLink + "\n\n" +
-        "Keep it short (3-5 sentences). Do NOT include subject line. Output ONLY the email body text.\n\n" +
+        "- Include this exact text as a clickable reference: [Task #" + taskId + "](" + taskLink + ")\n\n" +
+        "Keep it short (3-5 sentences). Do NOT include subject line, greetings like 'Dear' or sign-off. Output ONLY the body paragraph(s).\n\n" +
         "Original email subject: " + subject + "\n" +
-        "Original email body:\n" + emailText;
+        "Email thread:\n" + emailText;
 
     var payload = JSON.stringify({
         model: "gpt-4o-mini",
@@ -355,22 +352,38 @@ function generateDraftReply(taskLink, taskId) {
     })
     .then(function (data) {
         var draftBody = data.choices[0].message.content.trim();
-        setDraftReply(draftBody);
+        setDraftReplyAll(draftBody, taskLink, taskId);
     })
     .catch(function (err) {
-        showStatus("Draft non generato: " + err.message, "error");
+        showStatusHtml(document.getElementById("statusMsg").innerHTML +
+            "<br/><span style='color:#a80000;'>Draft non generato: " + err.message + "</span>", "success");
     });
 }
 
-function setDraftReply(bodyText) {
+function setDraftReplyAll(bodyText, taskLink, taskId) {
     var item = Office.context.mailbox.item;
+
+    // Convert markdown link to HTML anchor and ensure clickable link
     var htmlBody = bodyText.replace(/\n/g, "<br/>");
+    // Replace markdown-style links [text](url) with HTML anchors
+    htmlBody = htmlBody.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>');
+    // If the link wasn't inserted by LLM as markdown, ensure it's there as clickable
+    if (htmlBody.indexOf(taskLink) === -1 && htmlBody.indexOf("Task #" + taskId) === -1) {
+        htmlBody += '<br/><br/>Task reference: <a href="' + taskLink + '">Task #' + taskId + '</a>';
+    }
+    // Also replace plain URL text with clickable link (if LLM put it as plain text)
+    htmlBody = htmlBody.replace(new RegExp('(?<!href=")(' + taskLink.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ')(?!</a>)', 'g'),
+        '<a href="' + taskLink + '">Task #' + taskId + '</a>');
+
+    // Wrap in Aptos 12 black font
+    htmlBody = '<div style="font-family: Aptos, Calibri, sans-serif; font-size: 12pt; color: black;">' + htmlBody + '</div>';
+
     try {
-        item.displayReplyForm(htmlBody);
+        item.displayReplyAllForm(htmlBody);
     } catch (e) {
-        // Fallback: show draft text in the status area
+        // Fallback: show draft in the panel
         showStatusHtml(document.getElementById("statusMsg").innerHTML +
-            "<br/><br/><b>Draft risposta:</b><br/><div style='background:#fff;padding:8px;border:1px solid #ccc;margin-top:4px;'>" +
+            "<br/><br/><b>Draft risposta (Reply All):</b><br/><div style='background:#fff;padding:8px;border:1px solid #ccc;margin-top:4px;font-family:Aptos,sans-serif;font-size:12pt;'>" +
             htmlBody + "</div>", "success");
     }
 }
