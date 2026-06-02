@@ -4,6 +4,7 @@ Office.onReady(function (info) {
     if (info.host === Office.HostType.Outlook) {
         loadEmailData();
         document.getElementById("createBtn").addEventListener("click", createWorkItem);
+        document.getElementById("synthesizeBtn").addEventListener("click", runSynthesis);
         document.getElementById("toggleSetup").addEventListener("click", toggleSetup);
         document.getElementById("savePat").addEventListener("click", savePat);
         document.getElementById("saveGhToken").addEventListener("click", saveGhToken);
@@ -24,7 +25,8 @@ function loadEmailData() {
     item.body.getAsync(Office.CoercionType.Text, function (result) {
         if (result.status === Office.AsyncResultStatus.Succeeded) {
             emailBodyFull = result.value;
-            document.getElementById("descInput").value = "L'AI genererà titolo e descrizione al momento della creazione...";
+            // Auto-synthesize on load
+            runSynthesis();
         } else {
             document.getElementById("descInput").value = "(impossibile leggere il body)";
         }
@@ -65,6 +67,38 @@ function getGhToken() {
 }
 
 // --- LLM Synthesis (integrated into creation flow) ---
+
+function runSynthesis() {
+    var ghToken = getGhToken();
+    if (!ghToken) {
+        document.getElementById("descInput").value = "Configura il token GitHub per generare titolo e descrizione con AI.";
+        return;
+    }
+
+    var text = emailBodyFull;
+    if (!text || !text.trim()) {
+        document.getElementById("descInput").value = "In attesa del body email...";
+        return;
+    }
+
+    var btn = document.getElementById("synthesizeBtn");
+    btn.disabled = true;
+    btn.textContent = "Sintesi in corso...";
+    document.getElementById("descInput").value = "Generazione AI in corso...";
+
+    synthesizeWithAI(emailSubject, text)
+        .then(function (synthesized) {
+            document.getElementById("titleInput").value = synthesized.title;
+            document.getElementById("descInput").value = synthesized.description;
+        })
+        .catch(function (err) {
+            document.getElementById("descInput").value = "Errore AI: " + err.message + "\n\n" + emailBodyFull.substring(0, 500);
+        })
+        .finally(function () {
+            btn.disabled = false;
+            btn.textContent = "🔄 Rigenera con AI";
+        });
+}
 
 function synthesizeWithAI(subject, bodyText) {
     var ghToken = getGhToken();
@@ -174,62 +208,52 @@ function createWorkItem() {
         return;
     }
 
-    var ghToken = getGhToken();
-    if (!ghToken) {
-        showStatus("Configura il token GitHub nelle impostazioni!", "error");
-        toggleSetup();
-        return;
-    }
-
     var board = document.getElementById("boardSelect").value;
     var assignTo = document.getElementById("assignSelect").value;
 
     var btn = document.getElementById("createBtn");
     btn.disabled = true;
-    btn.textContent = "Sintesi AI in corso...";
+    btn.textContent = "Creazione work item...";
 
-    // Step 1: AI synthesis
-    synthesizeWithAI(emailSubject, emailBodyFull)
-        .then(function (synthesized) {
-            var title = synthesized.title;
-            var description = synthesized.description;
+    var title = document.getElementById("titleInput").value.trim();
+    var description = document.getElementById("descInput").value.trim();
 
-            // Update UI with AI results
-            document.getElementById("titleInput").value = title;
-            document.getElementById("descInput").value = description;
+    if (!title) {
+        showStatus("Il titolo è obbligatorio", "error");
+        btn.disabled = false;
+        btn.textContent = "Crea Work Item";
+        return;
+    }
 
-            btn.textContent = "Creazione work item...";
-
-            // Step 2: Get email as .eml
-            return getEmailAsEml()
-                .then(function (base64Eml) {
-                    var firstProject = (board === "ops") ? "Reply%20Operation" : "Reply%20Development%20Activities";
-                    return uploadAttachment(pat, firstProject, base64Eml, title.substring(0, 50) + ".eml")
-                        .then(function (attachResult) {
-                            return attachResult.url;
-                        });
-                })
-                .catch(function () {
-                    return null;
-                })
-                .then(function (attachmentUrl) {
-                    var promises = [];
-
-                    if (board === "dev" || board === "both") {
-                        promises.push(
-                            callDevOpsApi(pat, "Reply%20Development%20Activities", "Product%20Backlog%20Item", title, description, assignTo, attachmentUrl)
-                                .then(function (r) { r._project = "Reply%20Development%20Activities"; return r; })
-                        );
-                    }
-                    if (board === "ops" || board === "both") {
-                        promises.push(
-                            callDevOpsApi(pat, "Reply%20Operation", "Task", title, description, assignTo, attachmentUrl)
-                                .then(function (r) { r._project = "Reply%20Operation"; return r; })
-                        );
-                    }
-
-                    return Promise.all(promises);
+    // Step 1: Get email as .eml
+    getEmailAsEml()
+        .then(function (base64Eml) {
+            var firstProject = (board === "ops") ? "Reply%20Operation" : "Reply%20Development%20Activities";
+            return uploadAttachment(pat, firstProject, base64Eml, title.substring(0, 50) + ".eml")
+                .then(function (attachResult) {
+                    return attachResult.url;
                 });
+        })
+        .catch(function () {
+            return null;
+        })
+        .then(function (attachmentUrl) {
+            var promises = [];
+
+            if (board === "dev" || board === "both") {
+                promises.push(
+                    callDevOpsApi(pat, "Reply%20Development%20Activities", "Product%20Backlog%20Item", title, description, assignTo, attachmentUrl)
+                        .then(function (r) { r._project = "Reply%20Development%20Activities"; return r; })
+                );
+            }
+            if (board === "ops" || board === "both") {
+                promises.push(
+                    callDevOpsApi(pat, "Reply%20Operation", "Task", title, description, assignTo, attachmentUrl)
+                        .then(function (r) { r._project = "Reply%20Operation"; return r; })
+                );
+            }
+
+            return Promise.all(promises);
         })
         .then(function (results) {
             var links = results.map(function (r) {
