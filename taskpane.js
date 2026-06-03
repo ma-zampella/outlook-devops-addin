@@ -309,12 +309,12 @@ function callDevOpsApi(pat, project, workItemType, title, description, assignTo,
         var app = document.getElementById("appSelect").value;
         var severity = document.getElementById("severitySelect").value;
 
-        body.push({ op: "add", path: "/fields/Microsoft.VSTS.TCM.ReproSteps", value: "-" });
-        body.push({ op: "add", path: "/fields/Custom.Source", value: "1 MAIL" });
-        body.push({ op: "add", path: "/fields/Custom.Region", value: "Global" });
-        body.push({ op: "add", path: "/fields/Custom.OriginalApplication", value: app });
-        body.push({ op: "add", path: "/fields/Microsoft.VSTS.Common.Severity", value: severity });
-        body.push({ op: "add", path: "/fields/Custom.Impact", value: "D - Post-Release (LOW customer impact)" });
+        body.push({ op: "add", path: "/fields/Custom.StepstoReproduce", value: "-" });
+        body.push({ op: "add", path: "/fields/Custom.Source1", value: "1 MAIL" });
+        body.push({ op: "add", path: "/fields/Custom.Region_INC", value: "Global" });
+        body.push({ op: "add", path: "/fields/Custom.ReplyApplication", value: app });
+        body.push({ op: "add", path: "/fields/Custom.Severity1", value: severity });
+        body.push({ op: "add", path: "/fields/Custom.Project_Impact_INC", value: "D - Post-Release (LOW customer impact)" });
     }
 
     if (attachmentUrl) {
