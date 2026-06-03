@@ -242,7 +242,8 @@ function createWorkItem() {
                     return attachResult.url;
                 });
         })
-        .catch(function () {
+        .catch(function (e) {
+            console.warn("Attachment skipped:", e.message);
             return null;
         })
         .then(function (attachmentUrl) {
@@ -339,10 +340,13 @@ function callDevOpsApi(pat, project, workItemType, title, description, assignTo,
         },
         body: JSON.stringify(body)
     })
+    .catch(function (networkErr) {
+        throw new Error("Rete/CORS bloccato per " + workItemType + ": " + networkErr.message);
+    })
     .then(function (response) {
         if (!response.ok) {
             return response.text().then(function (text) {
-                throw new Error("HTTP " + response.status + ": " + text);
+                throw new Error(workItemType + " HTTP " + response.status + ": " + text);
             });
         }
         return response.json();
