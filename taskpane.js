@@ -8,6 +8,8 @@ Office.onReady(function (info) {
         document.getElementById("toggleSetup").addEventListener("click", toggleSetup);
         document.getElementById("savePat").addEventListener("click", savePat);
         document.getElementById("saveGhToken").addEventListener("click", saveGhToken);
+        document.getElementById("boardSelect").addEventListener("change", toggleOpsFields);
+        toggleOpsFields();
     }
 });
 
@@ -34,6 +36,12 @@ function loadEmailData() {
 }
 
 // --- Settings ---
+
+function toggleOpsFields() {
+    var board = document.getElementById("boardSelect").value;
+    var wrapper = document.getElementById("opsFieldsWrapper");
+    wrapper.style.display = (board === "ops" || board === "both") ? "block" : "none";
+}
 
 function toggleSetup() {
     var panel = document.getElementById("setupPanel");
@@ -242,13 +250,13 @@ function createWorkItem() {
 
             if (board === "dev" || board === "both") {
                 promises.push(
-                    callDevOpsApi(pat, "Reply%20Development%20Activities", "Product%20Backlog%20Item", title, description, assignTo, attachmentUrl)
+                    callDevOpsApi(pat, "Reply%20Development%20Activities", "Product%20Backlog%20Item", title, description, assignTo, attachmentUrl, false)
                         .then(function (r) { r._project = "Reply%20Development%20Activities"; return r; })
                 );
             }
             if (board === "ops" || board === "both") {
                 promises.push(
-                    callDevOpsApi(pat, "Reply%20Operation", "Task", title, description, assignTo, attachmentUrl)
+                    callDevOpsApi(pat, "Reply%20Operation", "Task", title, description, assignTo, attachmentUrl, true)
                         .then(function (r) { r._project = "Reply%20Operation"; return r; })
                 );
             }
@@ -286,7 +294,7 @@ function createWorkItem() {
         });
 }
 
-function callDevOpsApi(pat, project, workItemType, title, description, assignTo, attachmentUrl) {
+function callDevOpsApi(pat, project, workItemType, title, description, assignTo, attachmentUrl, isOpsTask) {
     var url = "https://dev.azure.com/Ivecogrp/" + project + "/_apis/wit/workitems/$" + workItemType + "?api-version=7.1";
 
     var body = [
@@ -294,6 +302,19 @@ function callDevOpsApi(pat, project, workItemType, title, description, assignTo,
         { op: "add", path: "/fields/System.Description", value: description },
         { op: "add", path: "/fields/System.AssignedTo", value: assignTo }
     ];
+
+    // Add Reply Operation required fields
+    if (isOpsTask) {
+        var app = document.getElementById("appSelect").value;
+        var severity = document.getElementById("severitySelect").value;
+
+        body.push({ op: "add", path: "/fields/Microsoft.VSTS.TCM.ReproSteps", value: "-" });
+        body.push({ op: "add", path: "/fields/Custom.Source", value: "1 MAIL" });
+        body.push({ op: "add", path: "/fields/Custom.Region", value: "Global" });
+        body.push({ op: "add", path: "/fields/Custom.OriginalApplication", value: app });
+        body.push({ op: "add", path: "/fields/Microsoft.VSTS.Common.Severity", value: severity });
+        body.push({ op: "add", path: "/fields/Custom.Impact", value: "D - Post-Release (LOW customer impact)" });
+    }
 
     if (attachmentUrl) {
         body.push({
