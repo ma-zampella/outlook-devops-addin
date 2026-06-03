@@ -308,13 +308,15 @@ function callDevOpsApi(pat, project, workItemType, title, description, assignTo,
     if (isOpsTask) {
         var app = document.getElementById("appSelect").value;
         var severity = document.getElementById("severitySelect").value;
+        var environment = document.getElementById("environmentSelect").value;
 
         body.push({ op: "add", path: "/fields/Custom.StepstoReproduce", value: "-" });
         body.push({ op: "add", path: "/fields/Custom.Source1", value: "1 MAIL" });
         body.push({ op: "add", path: "/fields/Custom.Region_INC", value: "Global" });
+        body.push({ op: "add", path: "/fields/Custom.Applications", value: app });
         body.push({ op: "add", path: "/fields/Custom.ReplyApplication", value: app });
         body.push({ op: "add", path: "/fields/Custom.Severity1", value: severity });
-        body.push({ op: "add", path: "/fields/Custom.Project_Impact_INC", value: "D - Post-Release (LOW customer impact)" });
+        body.push({ op: "add", path: "/fields/Custom.Environment_INC", value: environment });
     }
 
     if (attachmentUrl) {
