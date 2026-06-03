@@ -255,8 +255,9 @@ function createWorkItem() {
                 );
             }
             if (board === "ops" || board === "both") {
+                var opsType = document.getElementById("opsTypeSelect").value;
                 promises.push(
-                    callDevOpsApi(pat, "Reply%20Operation", "Task", title, description, assignTo, attachmentUrl, true)
+                    callDevOpsApi(pat, "Reply%20Operation", opsType, title, description, assignTo, attachmentUrl, true)
                         .then(function (r) { r._project = "Reply%20Operation"; return r; })
                 );
             }
