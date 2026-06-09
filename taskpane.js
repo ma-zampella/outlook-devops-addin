@@ -114,18 +114,19 @@ function synthesizeWithAI(subject, bodyText) {
         return Promise.reject(new Error("Token GitHub non configurato"));
     }
 
-    var prompt = "You are an assistant that analyzes email threads and produces two outputs.\n" +
-        "You will receive the FULL email thread (including previous replies). Use the entire context to understand the issue.\n\n" +
-        "OUTPUT 1 - TITLE: Determine if the email is related to one of these brands: Iveco, IVG, FPT. " +
-        "If you can identify the brand, output: MAIL / BRAND / original_subject. " +
-        "If you cannot identify the brand, output: MAIL / original_subject. " +
-        "Example: MAIL / FPT / Issue on Sitecore\n" +
-        "OUTPUT 2 - DESCRIPTION: Write a concise summary (3-4 sentences max) in ENGLISH of the email thread, " +
-        "capturing the action requested, context and any deadlines. Consider the full conversation history.\n\n" +
-        "Reply ONLY in this exact JSON format (no markdown, no code blocks):\n" +
-        '{"title": "MAIL / ... / ...", "description": "..."}\n\n' +
-        "Email subject: " + subject + "\n" +
-        "Full email thread:\n" + bodyText.substring(0, 4000);
+    var prompt = "You are a Technical Business Analyst. Your job is to analyze email threads and convert them into clear, actionable DevOps tickets for developers.\n" +
+    "You will receive the FULL email thread. Use the entire context to extract ONLY the technical issue and the task to be done.\n\n" +
+    "OUTPUT 1 - TITLE: Determine if the email is related to one of these brands: Iveco, IVG, FPT. " +
+    "If you can identify the brand, output: MAIL / BRAND / original_subject. " +
+    "If you cannot identify the brand, output: MAIL / original_subject. " +
+    "Example: MAIL / FPT / Issue on Sitecore\n" +
+    "OUTPUT 2 - DESCRIPTION: Write a technical description (3-4 sentences max) in ENGLISH focused EXCLUSIVELY on the actual problem, bug, or feature request. " +
+    "DO NOT summarize the conversation history, DO NOT mention who wrote to whom, and DO NOT include pleasantries or phrases like 'The user states that'. " +
+    "Focus ONLY on: What is broken/requested, where it happens, and what the expected behavior is, so a developer can immediately understand the scope of work.\n\n" +
+    "Reply ONLY in this exact JSON format (no markdown, no code blocks):\n" +
+    '{"title": "MAIL / ... / ...", "description": "..."}\n\n' +
+    "Email subject: " + subject + "\n" +
+    "Full email thread:\n" + bodyText.substring(0, 4000);
 
     var payload = JSON.stringify({
         model: "gpt-4o-mini",
@@ -266,20 +267,51 @@ function createWorkItem() {
             return Promise.all(promises);
         })
         .then(function (results) {
+            var opsResult = null;
+            var devResult = null;
+            for (var i = 0; i < results.length; i++) {
+                if (results[i]._project === "Reply%20Operation") {
+                    opsResult = results[i];
+                }
+                if (results[i]._project === "Reply%20Development%20Activities") {
+                    devResult = results[i];
+                }
+            }
+
+            if (board === "both" && opsResult && devResult) {
+                return linkWorkItemsParentChild(
+                    pat,
+                    devResult._project,
+                    devResult.id,
+                    opsResult._project,
+                    opsResult.id
+                )
+                .then(function () {
+                    return { results: results, opsResult: opsResult, linkCreated: true, linkError: null };
+                })
+                .catch(function (err) {
+                    return { results: results, opsResult: opsResult, linkCreated: false, linkError: err.message };
+                });
+            }
+
+            return { results: results, opsResult: opsResult, linkCreated: false, linkError: null };
+        })
+        .then(function (context) {
+            var results = context.results;
             var links = results.map(function (r) {
                 var url = "https://dev.azure.com/Ivecogrp/" + r._project + "/_workitems/edit/" + r.id;
                 return '<a href="' + url + '" target="_blank">#' + r.id + ' (' + r._project.replace(/%20/g, ' ') + ')</a>';
             }).join("<br/>");
-            showStatusHtml("Work item creato:<br/>" + links, "success");
+            var statusHtml = "Work item creato:<br/>" + links;
+            if (context.linkCreated) {
+                statusHtml += "<br/><br/>Relazione creata: task Operation Parent del task Reply Development Activities.";
+            } else if (context.linkError) {
+                statusHtml += "<br/><br/><span style='color:#a80000;'>Work item creati ma link Parent/Child non creato: " + context.linkError + "</span>";
+            }
+            showStatusHtml(statusHtml, "success");
 
             // Find Reply Operation task link for the draft
-            var opsResult = null;
-            for (var i = 0; i < results.length; i++) {
-                if (results[i]._project === "Reply%20Operation") {
-                    opsResult = results[i];
-                    break;
-                }
-            }
+            var opsResult = context.opsResult;
             var useResult = opsResult || results[0];
             var taskLink = "https://dev.azure.com/Ivecogrp/" + useResult._project + "/_workitems/edit/" + useResult.id;
 
@@ -353,6 +385,40 @@ function callDevOpsApi(pat, project, workItemType, title, description, assignTo,
     });
 }
 
+function linkWorkItemsParentChild(pat, childProject, childId, parentProject, parentId) {
+    var childApiUrl = "https://dev.azure.com/Ivecogrp/" + childProject +
+        "/_apis/wit/workitems/" + childId + "?api-version=7.1";
+    var parentApiReference = "https://dev.azure.com/Ivecogrp/" + parentProject +
+        "/_apis/wit/workItems/" + parentId;
+
+    var body = [{
+        op: "add",
+        path: "/relations/-",
+        value: {
+            rel: "System.LinkTypes.Hierarchy-Reverse",
+            url: parentApiReference,
+            attributes: { comment: "Linked automatically by Outlook add-in" }
+        }
+    }];
+
+    return fetch(childApiUrl, {
+        method: "PATCH",
+        headers: {
+            "Content-Type": "application/json-patch+json",
+            "Authorization": "Basic " + btoa(":" + pat)
+        },
+        body: JSON.stringify(body)
+    })
+    .then(function (response) {
+        if (!response.ok) {
+            return response.text().then(function (text) {
+                throw new Error("Link Parent/Child HTTP " + response.status + ": " + text);
+            });
+        }
+        return response.json();
+    });
+}
+
 function showStatus(message, type) {
     var el = document.getElementById("statusMsg");
     el.textContent = message;
@@ -374,15 +440,25 @@ function generateDraftReply(taskLink, taskId) {
     var emailText = emailBodyFull.substring(0, 2000);
     var subject = document.getElementById("titleInput").value;
 
-    var prompt = "Analyze the following email thread. Identify the language of the LAST message from the customer/external sender (not internal replies). " +
-        "Reply in THAT language (English or Italian).\n\n" +
-        "Write a brief, professional reply saying:\n" +
-        "- We have received their message and are looking into the issue\n" +
-        "- We will keep them updated on the progress\n" +
-        "- Include this exact text as a clickable reference: [Task #" + taskId + "](" + taskLink + ")\n\n" +
-        "Keep it short (3-5 sentences). Do NOT include subject line, greetings like 'Dear' or sign-off. Output ONLY the body paragraph(s).\n\n" +
-        "Original email subject: " + subject + "\n" +
-        "Email thread:\n" + emailText;
+    var prompt = "SYSTEM INSTRUCTION:\n" +
+    "You are an automated support assistant. Your task is to write a short, professional email acknowledgment.\n\n" +
+
+    "CRITICAL RULES:\n" +
+    "1. LANGUAGE: Detect the language of the VERY LAST email in the thread below. You MUST reply ONLY in that exact language (e.g., Italian if the last email is in Italian, English if it is in English).\n" +
+    "2. STYLE & BREVITY: Keep the central body paragraph extremely concise (max 2 sentences). Do not add conversational fluff.\n\n" +
+
+    "REQUIRED STRUCTURE (Translate all elements to the detected language):\n" +
+    "1. GREETING: Start with an appropriate greeting based on the time of day (e.g., 'Buongiorno / Buonasera' in Italian, or 'Good morning / Good afternoon' in English).\n" +
+    "2. LINE BREAK\n" +
+    "3. BODY: State that we received the message, are looking into the issue, and will keep them updated. Include this exact clickable reference: [Task #" + taskId + "](" + taskLink + ")\n" +
+    "4. LINE BREAK\n" +
+    "5. SIGN-OFF & SIGNATURE: Close with a professional thank you (e.g., 'Grazie e un cordiale saluto' / 'Thank you and best regards') followed by the name 'Marcello'.\n\n" +
+
+    "EMAIL DATA TO ANALYZE:\n" +
+    "Original Subject: " + subject + "\n" +
+    "Thread History:\n" + emailText + "\n\n" +
+
+    "OUTPUT DIRECTIVE: Generate ONLY the structured email according to the rules above. Do not include subject lines or extra text."
 
     var payload = JSON.stringify({
         model: "gpt-4o-mini",
