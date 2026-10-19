@@ -129,15 +129,17 @@ function synthesizeWithAI(subject, bodyText) {
     "Full email thread:\n" + bodyText.substring(0, 4000);
 
     var payload = JSON.stringify({
-        model: "gpt-4o-mini",
+        model: "openai/gpt-4o-mini",
         messages: [{ role: "user", content: prompt }],
         max_tokens: 400
     });
 
-    return fetch("https://models.inference.ai.azure.com/chat/completions", {
+    return fetch("https://models.github.ai/inference/chat/completions", {
         method: "POST",
         headers: {
+            "Accept": "application/vnd.github+json",
             "Authorization": "Bearer " + ghToken,
+            "X-GitHub-Api-Version": "2022-11-28",
             "Content-Type": "application/json"
         },
         body: payload
@@ -461,21 +463,25 @@ function generateDraftReply(taskLink, taskId) {
     "OUTPUT DIRECTIVE: Generate ONLY the structured email according to the rules above. Do not include subject lines or extra text."
 
     var payload = JSON.stringify({
-        model: "gpt-4o-mini",
+        model: "openai/gpt-4o-mini",
         messages: [{ role: "user", content: prompt }],
         max_tokens: 300
     });
 
-    fetch("https://models.inference.ai.azure.com/chat/completions", {
+    fetch("https://models.github.ai/inference/chat/completions", {
         method: "POST",
         headers: {
+            "Accept": "application/vnd.github+json",
             "Authorization": "Bearer " + ghToken,
+            "X-GitHub-Api-Version": "2022-11-28",
             "Content-Type": "application/json"
         },
         body: payload
     })
     .then(function (response) {
-        if (!response.ok) throw new Error("LLM error");
+        if (!response.ok) {
+            return response.text().then(function (t) { throw new Error("LLM HTTP " + response.status + ": " + t); });
+        }
         return response.json();
     })
     .then(function (data) {
